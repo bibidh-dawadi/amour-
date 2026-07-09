@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>For Sofi — A Little Keepsake</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Karla:wght@400;500;700&family=Caveat:wght@600;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+<!-- Live chat: no backend needed — messages relay through a public MQTT broker over WebSockets -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+<style>
+  /* ============================================================
+     CONFIG NOTE: Search this file for "EDIT ME" to customize
+     names, the chat password, the start date, images and songs.
+     ============================================================ */
+
+  :root{
+    --paper:#FBF4EC;
+    --blush:#F3DEE6;
+    --rose:#B24466;
+    --rose-deep:#7A2A44;
+    --moss:#6E7F5C;
+    --ink:#2B2530;
+    --gold:#C9A227;
+    --line: rgba(43,37,48,0.14);
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    font-family:'Karla', sans-serif;
+    background:
+      radial-gradient(circle at 8% 8%, rgba(178,68,102,0.06), transparent 40%),
+      radial-gradient(circle at 92% 20%, rgba(110,127,92,0.07), transparent 38%),
+      var(--paper);
+    color:var(--ink);
+    min-height:100vh;
+  }
+
+  h1,h2,h3, .display{ font-family:'Fraunces', serif; }
+  .script{ font-family:'Caveat', cursive; }
+
+  /* -------- envelope intro -------- */
+  #envelopeOverlay{
+    position:fixed; inset:0; z-index:5000;
+    display:flex; align-items:center; justify-content:center;
+    background: linear-gradient(160deg, #EFD9E1, #F7E7DB);
+    transition: opacity .6s ease, visibility .6s ease;
+  }
+  #envelopeOverlay.hidden{ opacity:0; visibility:hidden; pointer-events:none; }
+  .envelope{
+    width:min(320px, 78vw);
+    text-align:center;
+    cursor:pointer;
+  }
+  .seal{
+    width:92px; height:92px; margin:0 auto 22px;
+    border-radius:50%;
+    background: radial-gradient(circle at 35% 30%, #E4BE49, var(--gold) 60%, #9c7b12);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow: 0 10px 22px rgba(201,162,39,0.45), inset 0 2px 4px rgba(255,255,255,0.4);
+    color:#3c2c05; font-size:1.6rem;
+    transition: transform .35s ease;
+  }
+  .envelope:hover .seal{ transform: scale(1.06) rotate(-4deg); }
+  .envelope p.script{ font-size:1.5rem; color:var(--rose-deep); margin:0 0 6px; }
+  .envelope p.hint{ margin:0; color:#8a7a83; font-size:0.85rem; letter-spacing:.04em; text-transform:uppercase; }
+
+  /* -------- layout shell -------- */
+  .page{ max-width:1080px; margin:0 auto; padding: 54px 24px 90px; }
+
+  .eyebrow{
+    display:inline-flex; align-items:center; gap:8px;
+    font-size:.78rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--rose-deep); font-weight:700;
+  }
+  .eyebrow::before{ content:""; width:22px; height:1px; background:var(--rose-deep); display:inline-block; }
+
+  .hero{ text-align:center; padding: 10px 0 34px; }
+  .hero h1{ font-size:clamp(2.1rem, 5vw, 3.4rem); font-weight:700; margin:14px 0 10px; }
+  .hero .lede{ max-width:520px; margin:0 auto; color:#5c4f57; line-height:1.65; }
+
+  .counter{
+    margin: 30px auto 0; display:inline-flex; align-items:baseline; gap:10px;
+    padding: 14px 26px; border-radius:999px;
+    background: rgba(255,255,255,0.6); border:1px solid var(--line);
+  }
+  .counter .num{ font-family:'Fraunces', serif; font-size:2rem; font-weight:700; color:var(--rose); }
+  .counter .lbl{ font-size:.82rem; letter-spacing:.06em; text-transform:uppercase; color:#7a6b73; }
+
+  /* -------- portrait row -------- */
+  .portraits{
+    display:grid; grid-template-columns: 1fr 1.15fr 1fr;
+    gap:20px; align-items:center; margin: 46px 0;
+  }
+  @media (max-width:760px){ .portraits{ grid-template-columns:1fr; } }
+
+  .frame{
+    border-radius: 4px 4px 60px 4px;
+    overflow:hidden; background:var(--blush);
+    box-shadow: 0 18px 34px rgba(43,37,48,0.14);
+    border:1px solid var(--line);
+    aspect-ratio: 3/4;
+  }
+  .frame img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .frame.right{ border-radius: 4px 4px 4px 60px; }
+  .frame .ph{
+    width:100%; height:100%; display:flex; align-items:center; justify-content:center;
+    text-align:center; padding:16px; color:#8a7a83; font-size:.85rem;
+    background: repeating-linear-gradient(135deg, rgba(178,68,102,0.05) 0 12px, rgba(178,68,102,0.09) 12px 24px);
+  }
+
+  .note-card{
+    background:#fff; border-radius:18px; padding:28px 24px;
+    border:1px solid var(--line); box-shadow: 0 16px 30px rgba(43,37,48,0.08);
+    text-align:center;
+  }
+  .note-card p{ line-height:1.7; color:#5c4f57; margin:0; }
+  .note-card .script{ display:block; font-size:1.4rem; color:var(--rose); margin-top:14px; }
+
+  /* -------- divider -------- */
+  .sprig{ display:flex; justify-content:center; margin:52px 0 8px; opacity:.75; }
+
+  /* -------- generic section card -------- */
+  .card{
+    background:#fff; border-radius:20px; padding:30px;
+    border:1px solid var(--line); box-shadow: 0 14px 28px rgba(43,37,48,0.07);
+    margin-top:26px;
+  }
+  .card h2{ margin:0 0 6px; font-size:1.5rem; }
+  .card .sub{ color:#8a7a83; margin:0 0 18px; font-size:.92rem; }
+
+  textarea, input[type="text"], input[type="password"]{
+    width:100%; padding:11px 13px; border-radius:12px;
+    border:1px solid var(--line); background:#FBF8F4; font:inherit; color:var(--ink);
+  }
+  textarea{ resize:vertical; min-height:70px; }
+  textarea:focus, input:focus{ outline:2px solid var(--rose); outline-offset:1px; }
+
+  .btn{
+    border:none; padding:11px 20px; border-radius:999px; cursor:pointer;
+    font-weight:700; font-size:.92rem; color:#fff;
+    background: linear-gradient(135deg, var(--rose), var(--rose-deep));
+    box-shadow: 0 10px 18px rgba(178,68,102,0.28);
+    transition: transform .15s ease;
+  }
+  .btn:hover{ transform: translateY(-1px); }
+  .btn.ghost{
+    background:#fff; color:var(--rose-deep); border:1px solid var(--line); box-shadow:none;
+  }
+  .btn.moss{ background: linear-gradient(135deg, var(--moss), #566149); box-shadow:0 10px 18px rgba(110,127,92,0.28); }
+
+  .row{ display:flex; gap:10px; flex-wrap:wrap; }
+  .row > *{ flex:1; min-width:150px; }
+
+  .quote-list{ display:grid; gap:10px; margin-top:16px; }
+  .quote-item{
+    background:var(--blush); border-left:3px solid var(--rose);
+    padding:12px 14px; border-radius:10px; color:var(--rose-deep); font-size:.94rem;
+  }
+  .empty{ color:#a5949c; font-size:.88rem; font-style:italic; }
+
+  /* -------- magic jar -------- */
+  .jar-wrap{ text-align:center; }
+  .jar{
+    width:120px; height:150px; margin:18px auto 6px; cursor:pointer;
+    border-radius: 8px 8px 26px 26px;
+    background: linear-gradient(160deg, rgba(178,68,102,0.16), rgba(201,162,39,0.10));
+    border:2px solid rgba(178,68,102,0.3);
+    display:flex; align-items:center; justify-content:center;
+    box-shadow: inset 0 4px 10px rgba(178,68,102,0.12), 0 10px 18px rgba(43,37,48,0.1);
+    transition: transform .2s ease;
+  }
+  .jar:hover{ transform: scale(1.04) rotate(-1deg); }
+  .jar span{ font-weight:700; color:var(--rose-deep); font-size:.82rem; text-transform:uppercase; letter-spacing:.05em; }
+
+  .reasons{ display:grid; gap:8px; margin-top:16px; text-align:left; }
+
+  .flying-note{
+    position:fixed; pointer-events:none; z-index:4000;
+    padding:9px 14px; border-radius:10px; color:#fff; font-weight:600; font-size:.88rem;
+    background: linear-gradient(135deg, var(--rose), var(--rose-deep));
+    box-shadow: 0 8px 18px rgba(178,68,102,0.35);
+    max-width:220px;
+    animation: floatUp 2.2s ease-out forwards;
+  }
+  @keyframes floatUp{
+    0%{ opacity:1; transform: translate(0,0) scale(1); }
+    100%{ opacity:0; transform: translate(0,-260px) scale(.85); }
+  }
+
+  /* -------- drag reveal -------- */
+  .drag-zone{
+    margin-top:10px; min-height:120px; border-radius:16px;
+    border:1px dashed rgba(178,68,102,0.35); background:#FBF6F1;
+    position:relative; cursor:grab; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    color:#a5949c; font-size:.9rem;
+  }
+  .drag-tag{
+    position:absolute; pointer-events:none; opacity:0; transform:translate(-50%,-50%);
+    padding:8px 14px; border-radius:999px; color:#fff; font-weight:700;
+    background: linear-gradient(135deg, var(--rose), var(--rose-deep));
+    transition: opacity .15s ease;
+  }
+  .drag-tag.show{ opacity:1; }
+
+  /* -------- music -------- */
+  .music-select{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:10px; margin-bottom:18px;
+  }
+  .m-opt{
+    padding:12px 8px; text-align:center; border-radius:12px; cursor:pointer;
+    border:1px solid var(--line); background:#FBF8F4; font-weight:700; font-size:.86rem; color:var(--ink);
+    transition: all .2s ease;
+  }
+  .m-opt i{ display:block; margin-bottom:6px; font-size:1.1rem; color:var(--rose); }
+  .m-opt.active{ background: linear-gradient(135deg, var(--rose), var(--rose-deep)); color:#fff; border-color:transparent; }
+  .m-opt.active i{ color:#fff; }
+  .player-frame-wrap{ border-radius:14px; overflow:hidden; border:1px solid var(--line); }
+  .player-frame-wrap iframe{ width:100%; height:200px; display:block; border:0; }
+  .now-playing{ text-align:center; margin-top:10px; font-weight:700; color:var(--rose-deep); font-size:.92rem; }
+
+  /* -------- memories grid -------- */
+  .gallery{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:14px; margin-top:14px; }
+  .gallery .frame{ aspect-ratio:4/3; border-radius:14px; }
+
+  /* -------- floating chat -------- */
+  .chat-widget{ position:fixed; bottom:22px; right:22px; z-index:3000; font-family:'Karla', sans-serif; }
+  .chat-toggle{
+    width:58px; height:58px; border-radius:50%; cursor:pointer;
+    background: linear-gradient(135deg, var(--rose), var(--rose-deep)); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:1.4rem;
+    box-shadow:0 12px 24px rgba(178,68,102,0.35); position:relative;
+    transition: transform .2s ease;
+  }
+  .chat-toggle:hover{ transform: scale(1.05); }
+  .chat-window{
+    position:absolute; bottom:74px; right:0; width:min(320px, calc(100vw - 24px)); height:440px;
+    background: #2B2530; border-radius:18px; overflow:hidden; display:flex; flex-direction:column;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.3);
+    transform: scale(0); transform-origin:bottom right; opacity:0; pointer-events:none;
+    transition: transform .25s cubic-bezier(.175,.885,.32,1.275), opacity .2s ease;
+  }
+  .chat-window.active{ transform:scale(1); opacity:1; pointer-events:auto; }
+  .chat-head{
+    padding:14px 16px; text-align:center; color:#F0D8C8; font-family:'Fraunces', serif;
+    border-bottom:1px solid rgba(255,255,255,0.1); position:relative;
+  }
+  .chat-x{ position:absolute; right:14px; top:50%; transform:translateY(-50%); color:#cbb; cursor:pointer; }
+  .chat-x:hover{ color:#fff; }
+  .lock-pane{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; padding:20px; }
+  .lock-pane p{ color:#d9c9d2; text-align:center; font-size:.9rem; margin:0; line-height:1.5; }
+  .lock-pane input{ background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.2); color:#fff; text-align:center; }
+  .lock-pane .btn{ width:100%; }
+  .lock-err{ color:#ff9fb0; font-size:.82rem; min-height:16px; }
+  .chat-body{ display:none; flex-direction:column; flex:1; min-height:0; }
+  .chat-msgs{ flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column; gap:8px; }
+  .bubble{ max-width:82%; padding:8px 12px; border-radius:12px; font-size:.9rem; line-height:1.4; }
+  .bubble.me{ align-self:flex-end; background: linear-gradient(135deg, var(--rose), var(--rose-deep)); color:#fff; border-bottom-right-radius:4px; }
+  .bubble.them{ align-self:flex-start; background: rgba(255,255,255,0.12); color:#f3e8ee; border-bottom-left-radius:4px; }
+  .bubble.sys{ align-self:center; color:#a998a1; font-size:.78rem; font-style:italic; }
+  .chat-foot{ display:flex; gap:8px; padding:10px; border-top:1px solid rgba(255,255,255,0.1); }
+  .chat-foot textarea{
+    flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.18); color:#fff;
+    border-radius:999px; padding:8px 12px; resize:none; min-height:38px; max-height:100px;
+  }
+  .chat-foot button{
+    width:40px; height:40px; border-radius:50%; border:none; flex-shrink:0;
+    background: linear-gradient(135deg, var(--rose), var(--rose-deep)); color:#fff; cursor:pointer;
+  }
+  @media (max-width:480px){
+    .chat-window{ position:fixed; inset:0; width:100%; height:100%; border-radius:0; }
+  }
+
+  footer{ text-align:center; margin-top:60px; color:#a5949c; font-size:.82rem; }
+</style>
+</head>
+<body>
+
+  <!-- Wax-seal envelope intro -->
+  <div id="envelopeOverlay">
+    <div class="envelope" id="envelopeBtn">
+      <div class="seal"><i class="fa-solid fa-heart"></i></div>
+      <p class="script">A little something for you</p>
+      <p class="hint">Tap the seal to open</p>
+    </div>
+  </div>
+
+  <div class="page">
+
+    <section class="hero">
+      <span class="eyebrow">Our Beautiful Friendship</span>
+      <h1>Forever, softly, and sincerely</h1>
+      <p class="lede">
+        Welcome, <span id="herNameHero">Sofi</span> — every chapter with you feels warmer, brighter,
+        and more beautiful. This little page is made for our memories, our laughter, and the bond
+        that keeps growing.
+      </p>
+      <div class="counter">
+        <span class="num" id="dayCount">—</span>
+        <span class="lbl" id="dayLabel">days of friendship</span>
+      </div>
+    </section>
+
+    <div class="portraits">
+      <div class="frame left">
+        <!-- EDIT ME: replace with images/one.jpg -->
+        <img src="images/one.jpeg" alt="Memory one" onerror="this.parentElement.innerHTML='<div class=&quot;ph&quot;>Add images/one.jpg here</div>'" />
+      </div>
+      <div class="note-card">
+        <p>Some friendships find you at exactly the right moment, and never quite leave.
+           This one is ours.</p>
+        <span class="script">— with love, always</span>
+      </div>
+      <div class="frame right">
+        <!-- EDIT ME: replace with images/two.jpg -->
+        <img src="images/two.jpeg" alt="Memory two" onerror="this.parentElement.innerHTML='<div class=&quot;ph&quot;>Add images/two.jpg here</div>'" />
+      </div>
+    </div>
+
+    <div class="sprig">
+      <svg width="120" height="24" viewBox="0 0 120 24" fill="none">
+        <path d="M2 12h116" stroke="#B24466" stroke-opacity="0.3"/>
+        <circle cx="60" cy="12" r="4" fill="#B24466" fill-opacity="0.5"/>
+        <circle cx="46" cy="12" r="2.5" fill="#6E7F5C" fill-opacity="0.5"/>
+        <circle cx="74" cy="12" r="2.5" fill="#6E7F5C" fill-opacity="0.5"/>
+      </svg>
+    </div>
+
+    <!-- Sweet memories / quotes -->
+    <section class="card">
+      <h2>🌊 The hidden dive</h2>
+      <p class="sub">Drop a quote, an inside joke, or a memory you want to keep.</p>
+      <textarea id="quoteInput" placeholder="Write something beautiful..."></textarea>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" id="addQuote">Add memory</button>
+      </div>
+      <div class="quote-list" id="quoteList"></div>
+    </section>
+
+    <!-- Magic jar -->
+    <section class="card jar-wrap">
+      <h2>✨ A Touch of Magic</h2>
+      <p class="sub">Click the jar for a reason our friendship is beautiful.</p>
+      <div class="jar" id="magicJar"><span>Click me</span></div>
+      <div class="reasons" id="reasonsList"></div>
+    </section>
+
+    <!-- Drag reveal -->
+    <section class="card">
+      <h2>🖊️ Drag and reveal</h2>
+      <p class="sub">Click and drag inside the box below to reveal her name.</p>
+      <div class="drag-zone" id="dragZone">
+        <span>Drag gently, right here</span>
+        <div class="drag-tag" id="dragTag">Her Name</div>
+      </div>
+    </section>
+
+    <!-- Music -->
+   <section class="card">
+      <h2>🎵 Our Playlist</h2>
+      <p class="sub">Pick a mood — the player below updates instantly.</p>
+      <div class="music-select" id="musicSelect">
+        <div class="m-opt active" data-id="6FEsFvZ-hqY" data-label="Dhairya">
+          <i class="fa-solid fa-music"></i>Dhairya
+        </div>
+        <div class="m-opt" data-id="qyRrUEInzAs" data-label="Thamana Haat  ">
+          <i class="fa-solid fa-heart"></i>Thamana Haat
+        </div>
+        <div class="m-opt" data-id="I6Etemcdkgc" data-label="Shy">
+          <i class="fa-solid fa-cloud"></i>SHY
+        </div>
+        <div class="m-opt" data-id="EbyAoYaUcVo" data-label="WHO">
+          <i class="fa-solid fa-guitar"></i>WHO
+        </div>
+        <div class="m-opt" data-id="5C7M2fZWJ4E" data-label="Theekh Hu Mei ">
+          <i class="fa-solid fa-headphones"></i> Theekh Hu Mei 
+        </div>
+      </div>
+      <div class="player-frame-wrap">
+        <iframe id="musicFrame" src="https://www.youtube.com/embed/6FEsFvZ-hqY"
+          allow="autoplay; encrypted-media" allowfullscreen title="Playlist"></iframe>
+      </div>
+      <div class="now-playing" id="nowPlaying">Now playing: Soft Piano</div>
+    </section>
+
+    <!-- Gallery -->
+    <section class="card">
+      <h2>🖼️ Our Memories</h2>
+      <p class="sub">Beautiful moments we've shared together.</p>
+      <div class="gallery">
+        <div class="frame">
+          <img src="images/one.jpg" alt="Memory 1" onerror="this.parentElement.innerHTML='<div class=&quot;ph&quot;>Add images/one.jpg here</div>'" />
+        </div>
+        <div class="frame">
+          <img src="images/two.jpg" alt="Memory 2" onerror="this.parentElement.innerHTML='<div class=&quot;ph&quot;>Add images/two.jpg here</div>'" />
+        </div>
+      </div>
+    </section>
+
+    <footer>Made with care, one memory at a time.</footer>
+  </div>
+
+  <!-- Floating secret chat -->
+  <div class="chat-widget" id="chatWidget">
+    <div class="chat-toggle" id="chatToggle" aria-label="Open secret chat"><i class="fa-solid fa-comment-heart"></i>💬</div>
+    <div class="chat-window" id="chatWindow">
+      <div class="chat-head">
+        Secret Chat
+        <span class="chat-x" id="chatClose">✕</span>
+      </div>
+      <div class="lock-pane" id="lockPane">
+        <p>Enter your name and the password to open the live chat.</p>
+        <input type="text" id="chatDisplayName" placeholder="Your name" maxlength="40" />
+        <input type="password" id="chatPassword" placeholder="Password" />
+        <button class="btn" id="chatUnlock">Enter chat</button>
+        <div class="lock-err" id="lockErr"></div>
+      </div>
+      <div class="chat-body" id="chatBody">
+        <div class="chat-msgs" id="chatMsgs"></div>
+        <div class="chat-foot">
+          <textarea id="chatInput" rows="1" placeholder="Type a sweet message..."></textarea>
+          <button id="chatSend" aria-label="Send"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ============================================================
+  // EDIT ME — customize these values
+  // ============================================================
+  const CONFIG = {
+    herName: "Sofi",                 // shown in the hero text
+    chatPassword: "amour",           // password needed to enter the live chat
+    startDate: "2023-07-09",         // YYYY-MM-DD — used for the day counter
+    dragRevealName: "Sofi Devkota",  // name revealed by the drag box
+
+    // <<< LIVE CHAT SETTINGS >>>
+    // No backend server needed — messages relay through a public MQTT
+    // broker over WebSockets. Change chatTopic to something unique to you
+    // (anyone who guesses this exact string could technically listen in,
+    // since the broker is public).
+    chatTopic: "sofi-devkota-friendship-secret-chat-v1"
+  };
+
+  document.getElementById('herNameHero').textContent = CONFIG.herName;
+
+  // ---------- day counter ----------
+  (function(){
+    const start = new Date(CONFIG.startDate + 'T00:00:00');
+    const now = new Date();
+    const days = Math.max(0, Math.floor((now - start) / 86400000));
+    document.getElementById('dayCount').textContent = days.toLocaleString();
+  })();
+
+  // ---------- envelope intro ----------
+  const overlay = document.getElementById('envelopeOverlay');
+  document.getElementById('envelopeBtn').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+  });
+
+  // ---------- memories / quotes ----------
+  const QUOTE_KEY = 'friendship-quotes';
+  const quoteInput = document.getElementById('quoteInput');
+  const quoteList = document.getElementById('quoteList');
+
+  function loadQuotes(){
+    try { return JSON.parse(localStorage.getItem(QUOTE_KEY) || '[]'); }
+    catch(e){ return []; }
+  }
+  function renderQuotes(){
+    const quotes = loadQuotes();
+    quoteList.innerHTML = '';
+    if (!quotes.length){
+      quoteList.innerHTML = '<div class="empty">No memories added yet — write the first one above.</div>';
+      return;
+    }
+    quotes.forEach(q => {
+      const div = document.createElement('div');
+      div.className = 'quote-item';
+      div.textContent = q;
+      quoteList.appendChild(div);
+    });
+  }
+  document.getElementById('addQuote').addEventListener('click', () => {
+    const val = quoteInput.value.trim();
+    if (!val) return;
+    const quotes = loadQuotes();
+    quotes.unshift(val);
+    localStorage.setItem(QUOTE_KEY, JSON.stringify(quotes));
+    quoteInput.value = '';
+    renderQuotes();
+  });
+  renderQuotes();
+
+  // ---------- magic jar ----------
+  const magicReasons = [
+    "You always know how to make me smile.",
+    "Your kindness touches my heart.",
+    "You listen with genuine care.",
+    "You're always there when I need you.",
+    "Your laugh is contagious and beautiful.",
+    "You make me feel valued and loved.",
+    "Your creativity inspires me.",
+    "You're my safe place.",
+    "You make ordinary moments special.",
+    "Your friendship is a precious gift."
+  ];
+  const magicJar = document.getElementById('magicJar');
+  const reasonsList = document.getElementById('reasonsList');
+  magicJar.addEventListener('click', () => {
+    const reason = magicReasons[Math.floor(Math.random() * magicReasons.length)];
+    const rect = magicJar.getBoundingClientRect();
+
+    const note = document.createElement('div');
+    note.className = 'flying-note';
+    note.textContent = reason;
+    note.style.left = (rect.left + rect.width / 2) + 'px';
+    note.style.top = rect.top + 'px';
+    document.body.appendChild(note);
+    setTimeout(() => note.remove(), 2200);
+
+    const item = document.createElement('div');
+    item.className = 'quote-item';
+    item.textContent = reason;
+    reasonsList.insertBefore(item, reasonsList.firstChild);
+  });
+
+  // ---------- drag reveal ----------
+  const dragZone = document.getElementById('dragZone');
+  const dragTag = document.getElementById('dragTag');
+  let dragging = false;
+
+  function updateDrag(x, y){
+    const rect = dragZone.getBoundingClientRect();
+    dragTag.textContent = CONFIG.dragRevealName;
+    dragTag.classList.add('show');
+    dragTag.style.left = (x - rect.left) + 'px';
+    dragTag.style.top = (y - rect.top) + 'px';
+  }
+  function stopDrag(){ dragging = false; dragTag.classList.remove('show'); }
+
+  dragZone.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    dragZone.setPointerCapture(e.pointerId);
+    updateDrag(e.clientX, e.clientY);
+  });
+  dragZone.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    updateDrag(e.clientX, e.clientY);
+  });
+  dragZone.addEventListener('pointerup', stopDrag);
+  dragZone.addEventListener('pointerleave', stopDrag);
+  dragZone.addEventListener('pointercancel', stopDrag);
+
+  // ---------- music player (simple, reliable iframe swap) ----------
+  const musicOptions = Array.from(document.querySelectorAll('.m-opt'));
+  const musicFrame = document.getElementById('musicFrame');
+  const nowPlaying = document.getElementById('nowPlaying');
+
+  musicOptions.forEach(opt => {
+    opt.addEventListener('click', () => {
+      musicOptions.forEach(o => o.classList.remove('active'));
+      opt.classList.add('active');
+      const id = opt.dataset.id;
+      const label = opt.dataset.label;
+      musicFrame.src = `https://www.youtube.com/embed/${id}?autoplay=1`;
+      nowPlaying.textContent = `Now playing: ${label}`;
+    });
+  });
+
+  // ---------- floating secret chat — LIVE, via public MQTT broker ----------
+  // No backend server to host or maintain. Messages relay through a public
+  // MQTT broker (broker.hivemq.com) over WebSockets, using CONFIG.chatTopic as
+  // a shared "room". Anyone on the page who enters the right password can
+  // chat live with anyone else who also has the page open — on any device.
+  const chatToggle = document.getElementById('chatToggle');
+  const chatWindow = document.getElementById('chatWindow');
+  const chatClose = document.getElementById('chatClose');
+  const lockPane = document.getElementById('lockPane');
+  const chatBody = document.getElementById('chatBody');
+  const chatDisplayName = document.getElementById('chatDisplayName');
+  const chatPasswordInput = document.getElementById('chatPassword');
+  const chatUnlock = document.getElementById('chatUnlock');
+  const lockErr = document.getElementById('lockErr');
+  const chatMsgs = document.getElementById('chatMsgs');
+  const chatInput = document.getElementById('chatInput');
+  const chatSend = document.getElementById('chatSend');
+
+  const MQTT_BROKER = "broker.hivemq.com";
+  const MQTT_PORT = 8000;
+  const MQTT_PATH = "/mqtt";
+  const MQTT_USE_SSL = false;
+  const MAX_HISTORY = 200;
+  const HISTORY_KEY = 'friendship-chat-history';
+
+  // A stable per-device id, so bubbles render as "me" vs "them"
+  // consistently even after a page refresh.
+  let myId = localStorage.getItem('friendship-chat-device-id');
+  if (!myId) {
+    myId = 'dev-' + Math.random().toString(36).slice(2) + Date.now();
+    localStorage.setItem('friendship-chat-device-id', myId);
+  }
+  let myName = 'Friend';
+
+  let messageHistory = [];
+  try { messageHistory = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); }
+  catch (e) { messageHistory = []; }
+
+  let mqttClient = null;
+  let unlocked = false;
+
+  chatSend.disabled = true;
+  chatInput.disabled = true;
+
+  function showLock(){ lockPane.style.display = 'flex'; chatBody.style.display = 'none'; }
+  function showChat(){ lockPane.style.display = 'none'; chatBody.style.display = 'flex'; }
+
+  function addBubble(className, text){
+    const b = document.createElement('div');
+    b.className = 'bubble ' + className;
+    b.textContent = text;
+    chatMsgs.appendChild(b);
+    chatMsgs.scrollTop = chatMsgs.scrollHeight;
+  }
+
+  function renderHistory(){
+    chatMsgs.innerHTML = '';
+    if (!messageHistory.length){
+      addBubble('sys', 'Your live messages will appear here.');
+      return;
+    }
+    messageHistory.forEach(m => addBubble(m.senderId === myId ? 'me' : 'them', m.text));
+  }
+
+  function saveHistory(){
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(messageHistory.slice(-MAX_HISTORY)));
+  }
+
+  function publishMessage(msgObj){
+    if (!mqttClient || !mqttClient.isConnected()) return;
+    try {
+      const payload = JSON.stringify(msgObj);
+      const message = new Paho.MQTT.Message(payload);
+      message.destinationName = CONFIG.chatTopic;
+      mqttClient.send(message);
+    } catch (e) {
+      console.error('Could not publish chat message:', e);
+    }
+  }
+
+  function handleIncoming(payloadString){
+    try {
+      let incoming = JSON.parse(payloadString);
+      incoming = Array.isArray(incoming) ? incoming : [incoming];
+      let changed = false;
+      incoming.forEach(remote => {
+        if (!remote || !remote.msgId || !remote.text) return;
+        if (!messageHistory.some(m => m.msgId === remote.msgId)) {
+          messageHistory.push(remote);
+          changed = true;
+        }
+      });
+      if (changed) {
+        messageHistory.sort((a, b) => a.ts - b.ts);
+        saveHistory();
+        renderHistory();
+      }
+    } catch (e) {
+      console.error('Error parsing incoming chat payload:', e);
+    }
+  }
+
+  function connectAndJoin(name, password){
+    if (password !== CONFIG.chatPassword) {
+      lockErr.textContent = 'Wrong password — try again.';
+      return;
+    }
+    myName = name;
+    lockErr.textContent = 'Connecting...';
+
+    const clientId = 'client_' + Math.random().toString(16).slice(2, 10);
+    mqttClient = new Paho.MQTT.Client(MQTT_BROKER, MQTT_PORT, MQTT_PATH, clientId);
+
+    mqttClient.onConnectionLost = (res) => {
+      if (res.errorCode !== 0) {
+        addBubble('sys', 'Disconnected — reopen the chat to reconnect.');
+      }
+      chatSend.disabled = true;
+      chatInput.disabled = true;
+    };
+    mqttClient.onMessageArrived = (message) => handleIncoming(message.payloadString);
+
+    mqttClient.connect({
+      useSSL: MQTT_USE_SSL,
+      timeout: 10,
+      cleanSession: true,
+      onSuccess: () => {
+        unlocked = true;
+        lockErr.textContent = '';
+        chatPasswordInput.value = '';
+        chatSend.disabled = false;
+        chatInput.disabled = false;
+        showChat();
+        mqttClient.subscribe(CONFIG.chatTopic);
+        renderHistory();
+        addBubble('sys', 'Connected! Type a message to begin.');
+      },
+      onFailure: (err) => {
+        lockErr.textContent = 'Could not connect: ' + (err.errorMessage || 'network error');
+      }
+    });
+  }
+
+  chatToggle.addEventListener('click', () => {
+    chatWindow.classList.toggle('active');
+    if (chatWindow.classList.contains('active') && unlocked){
+      showChat();
+    } else if (chatWindow.classList.contains('active')){
+      showLock();
+    }
+  });
+  chatClose.addEventListener('click', () => chatWindow.classList.remove('active'));
+
+  chatUnlock.addEventListener('click', () => {
+    const name = chatDisplayName.value.trim() || 'Friend';
+    const password = chatPasswordInput.value;
+    if (!password){
+      lockErr.textContent = 'Please enter the password.';
+      return;
+    }
+    connectAndJoin(name, password);
+  });
+  chatPasswordInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') chatUnlock.click();
+  });
+
+  function sendMessage(){
+    const text = chatInput.value.trim();
+    if (!text || !mqttClient || !mqttClient.isConnected()) return;
+
+    const msgObj = {
+      msgId: myId + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      senderId: myId,
+      name: myName,
+      text: text,
+      ts: Date.now()
+    };
+    messageHistory.push(msgObj);
+    saveHistory();
+    addBubble('me', text);
+    publishMessage(msgObj);
+
+    chatInput.value = '';
+  }
+
+  chatSend.addEventListener('click', sendMessage);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey){
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!chatWindow.contains(e.target) && !chatToggle.contains(e.target) && chatWindow.classList.contains('active')){
+      chatWindow.classList.remove('active');
+    }
+  });
+
+  showLock();
+})();
+</script>
+</body>
+</html>
